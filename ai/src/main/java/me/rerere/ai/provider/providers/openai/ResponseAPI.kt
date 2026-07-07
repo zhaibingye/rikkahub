@@ -499,29 +499,9 @@ class ResponseAPI(
                 val type = item["type"]?.jsonPrimitive?.content ?: error("chunk type not found")
                 val id = item["id"]?.jsonPrimitive?.content ?: error("chunk id not found")
                 if (type == "function_call") {
-                    return MessageChunk(
-                        id = id,
-                        model = "",
-                        choices = listOf(
-                            UIMessageChoice(
-                                index = 0,
-                                message = null,
-                                delta = UIMessage(
-                                    role = MessageRole.ASSISTANT,
-                                    parts = listOf(
-                                        UIMessagePart.Tool(
-                                            toolCallId = id,
-                                            toolName = item["name"]?.jsonPrimitive?.content ?: "",
-                                            input = item["arguments"]?.jsonPrimitive?.content
-                                                ?: "",
-                                            output = emptyList()
-                                        )
-                                    )
-                                ),
-                                finishReason = null
-                            )
-                        )
-                    )
+                    // Wait for response.output_item.done before emitting the tool call. The added event only has the
+                    // response item id, while the next request must replay function calls with their call_id.
+                    return null
                 } else if (type == "image_generation_call") {
                     return MessageChunk(
                         id = id,
@@ -618,36 +598,39 @@ class ResponseAPI(
                             )
                         )
                     )
+                } else if (type == "function_call") {
+                    val callId = item["call_id"]?.jsonPrimitive?.content ?: error("call_id not found")
+                    val name = item["name"]?.jsonPrimitive?.content ?: error("name not found")
+                    val arguments = item["arguments"]?.jsonPrimitive?.content ?: error("arguments not found")
+                    return MessageChunk(
+                        id = callId,
+                        model = "",
+                        choices = listOf(
+                            UIMessageChoice(
+                                index = 0,
+                                delta = UIMessage(
+                                    role = MessageRole.ASSISTANT,
+                                    parts = listOf(
+                                        UIMessagePart.Tool(
+                                            toolCallId = callId,
+                                            toolName = name,
+                                            input = arguments,
+                                            output = emptyList()
+                                        )
+                                    )
+                                ),
+                                message = null,
+                                finishReason = null
+                            )
+                        ),
+                    )
                 }
             }
 
             "response.function_call_arguments.done" -> {
-                val toolCallId =
-                    jsonObject["item_id"]?.jsonPrimitive?.content ?: error("item_id not found")
-                val arguments =
-                    jsonObject["arguments"]?.jsonPrimitive?.content ?: error("arguments not found")
-                return MessageChunk(
-                    id = toolCallId,
-                    model = "",
-                    choices = listOf(
-                        UIMessageChoice(
-                            index = 0,
-                            delta = UIMessage(
-                                role = MessageRole.ASSISTANT,
-                                parts = listOf(
-                                    UIMessagePart.Tool(
-                                        toolCallId = toolCallId,
-                                        toolName = "",
-                                        input = arguments,
-                                        output = emptyList()
-                                    )
-                                )
-                            ),
-                            message = null,
-                            finishReason = null
-                        )
-                    ),
-                )
+                // The final response.output_item.done event contains the call_id required for replaying tool calls.
+                // Avoid emitting an item_id-keyed tool here, which would later serialize an invalid call_id.
+                return null
             }
 
             "response.completed" -> {

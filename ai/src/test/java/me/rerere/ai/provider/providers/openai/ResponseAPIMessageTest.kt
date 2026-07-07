@@ -2,15 +2,18 @@ package me.rerere.ai.provider.providers.openai
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
+import me.rerere.ai.ui.MessageChunk
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import okhttp3.OkHttpClient
@@ -354,7 +357,49 @@ class ResponseAPIMessageTest {
         assertEquals("low", reasoning!!["effort"]?.jsonPrimitive?.content)
     }
 
+
+    @Test
+    fun `streaming function call done should use call id for tool replay`() {
+        val chunk = invokeParseResponseDelta(
+            buildJsonObject {
+                put("type", "response.output_item.done")
+                put("item", buildJsonObject {
+                    put("id", "fc_123")
+                    put("type", "function_call")
+                    put("call_id", "call_abc")
+                    put("name", "use_skill")
+                    put("arguments", "{\"name\":\"test\"}")
+                })
+            }
+        )
+
+        val tool = chunk!!.choices.single().delta!!.parts.single() as UIMessagePart.Tool
+        assertEquals("call_abc", tool.toolCallId)
+        assertEquals("use_skill", tool.toolName)
+        assertEquals("{\"name\":\"test\"}", tool.input)
+    }
+
+    @Test
+    fun `streaming function call argument event should not emit item id keyed tool`() {
+        val chunk = invokeParseResponseDelta(
+            buildJsonObject {
+                put("type", "response.function_call_arguments.done")
+                put("item_id", "fc_123")
+                put("arguments", "{\"name\":\"test\"}")
+            }
+        )
+
+        assertEquals(null, chunk)
+    }
+
     // ==================== Helper Functions ====================
+
+
+    private fun invokeParseResponseDelta(event: JsonObject): MessageChunk? {
+        val method = ResponseAPI::class.java.getDeclaredMethod("parseResponseDelta", JsonObject::class.java)
+        method.isAccessible = true
+        return method.invoke(api, event) as MessageChunk?
+    }
 
     private fun createExecutedTool(
         callId: String,
